@@ -1,0 +1,277 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>羽毛球步伐训练器</title>
+<style>
+  :root {
+    --bg: #0e1512;
+    --court: #1f6b4a;
+    --line: #e8f2ec;
+    --point: #2f8a62;
+    --hot: #ffd23f;
+    --text: #f2f6f4;
+    --muted: #9db3a8;
+    --accent: #ff7a3d;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+  }
+  main {
+    min-height: 100dvh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 16px;
+    padding: 12px;
+  }
+  :focus-visible { outline: 3px solid var(--hot); outline-offset: 2px; }
+
+  .court {
+    container-type: inline-size;
+    position: relative;
+    width: min(100%, calc(100dvh - 300px));
+    aspect-ratio: 1;
+    display: grid;
+    grid-template: repeat(3, 1fr) / repeat(3, 1fr);
+    place-items: center;
+    background: var(--court);
+    border: 3px solid var(--line);
+    border-top-width: 8px;
+    border-radius: 6px;
+  }
+  .court::before {
+    content: "球网";
+    position: absolute;
+    top: 0.8cqw;
+    left: 50%;
+    transform: translateX(-50%);
+    font-size: 3cqw;
+    color: var(--line);
+    opacity: 0.7;
+  }
+  .point {
+    width: 62%;
+    aspect-ratio: 1;
+    padding: 0;
+    border: 0.6cqw solid var(--line);
+    border-radius: 50%;
+    background: var(--point);
+    color: var(--text);
+    font: inherit;
+    font-size: 5cqw;
+    font-weight: 600;
+    cursor: pointer;
+    transition: transform 80ms, background-color 80ms;
+  }
+  .point[aria-pressed="false"] { opacity: 0.3; border-style: dashed; }
+  .court.running .point { cursor: default; }
+  .point.hot {
+    background: var(--hot);
+    color: #1a1a1a;
+    transform: scale(1.25);
+    box-shadow: 0 0 0 2cqw rgba(255, 210, 63, 0.35), 0 0 8cqw var(--hot);
+  }
+  .status { font-size: 13cqw; font-weight: 800; line-height: 1; }
+
+  .panel { width: min(100%, 360px); display: grid; gap: 10px; }
+  .progress {
+    text-align: center;
+    font-size: 28px;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+  }
+  fieldset { border: 0; margin: 0; padding: 0; display: grid; gap: 10px; min-width: 0; }
+  fieldset:disabled { opacity: 0.5; }
+  .row { display: grid; grid-template-columns: 3em 1fr 4.5em; align-items: center; gap: 10px; }
+  .row output { text-align: right; font-variant-numeric: tabular-nums; }
+  .row input[type="range"] { width: 100%; accent-color: var(--accent); }
+  .check { display: flex; align-items: center; gap: 8px; }
+  .check input { width: 20px; height: 20px; accent-color: var(--accent); }
+  .hint { margin: 0; color: var(--muted); font-size: 13px; }
+  .primary {
+    height: 52px;
+    border: 0;
+    border-radius: 10px;
+    background: var(--accent);
+    color: #1a1a1a;
+    font: inherit;
+    font-size: 20px;
+    font-weight: 700;
+    cursor: pointer;
+  }
+  .primary:active { filter: brightness(0.9); }
+
+  @media (orientation: landscape) and (min-width: 700px) {
+    main { flex-direction: row; gap: 28px; }
+    .court { width: min(calc(100vw - 420px), calc(100dvh - 24px)); }
+  }
+</style>
+</head>
+<body>
+<main>
+  <section class="court" id="court" aria-label="球场点位"></section>
+
+  <section class="panel">
+    <div class="progress" aria-label="进度"><span id="done">0</span> / <span id="total">20</span></div>
+    <fieldset id="settings">
+      <label class="row">间隔
+        <input type="range" id="interval" min="1" max="6" step="0.5" value="3">
+        <output id="intervalOut"></output>
+      </label>
+      <label class="row">次数
+        <input type="range" id="count" min="5" max="60" step="5" value="20">
+        <output id="countOut"></output>
+      </label>
+      <label class="check"><input type="checkbox" id="voice" checked> 语音报点</label>
+      <p class="hint">点按球场上的点位可开启或关闭</p>
+    </fieldset>
+    <button type="button" class="primary" id="toggle">开始</button>
+  </section>
+</main>
+
+<script src="footwork.js"></script>
+<script>
+  const { POINTS, pickNext } = Footwork;
+  const $ = (id) => document.getElementById(id);
+  const court = $('court'), settings = $('settings'), toggle = $('toggle');
+  const intervalInput = $('interval'), countInput = $('count'), voice = $('voice');
+
+  const enabled = new Set(POINTS.map((p) => p.id));
+  const buttons = {};
+  const status = document.createElement('div');
+  status.className = 'status';
+  status.textContent = '中';
+
+  POINTS.forEach((p, i) => {
+    if (i === 4) court.append(status);
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'point';
+    b.textContent = p.name;
+    b.setAttribute('aria-pressed', 'true');
+    b.addEventListener('click', () => togglePoint(p.id));
+    buttons[p.id] = b;
+    court.append(b);
+  });
+
+  let running = false, done = 0, last = null, timers = [], audio = null, wakeLock = null;
+
+  function togglePoint(id) {
+    if (running) return;
+    if (enabled.has(id) && enabled.size === 1) return;
+    enabled.has(id) ? enabled.delete(id) : enabled.add(id);
+    buttons[id].setAttribute('aria-pressed', String(enabled.has(id)));
+  }
+
+  function renderSettings() {
+    $('intervalOut').textContent = Number(intervalInput.value).toFixed(1) + ' 秒';
+    $('countOut').textContent = countInput.value + ' 次';
+    $('total').textContent = countInput.value;
+  }
+  intervalInput.addEventListener('input', renderSettings);
+  countInput.addEventListener('input', renderSettings);
+  renderSettings();
+
+  const later = (fn, ms) => timers.push(setTimeout(fn, ms));
+
+  function beep(freq, ms) {
+    const osc = audio.createOscillator(), gain = audio.createGain();
+    osc.frequency.value = freq;
+    gain.gain.value = 0.2;
+    osc.connect(gain).connect(audio.destination);
+    osc.start();
+    osc.stop(audio.currentTime + ms / 1000);
+  }
+
+  function speak(text) {
+    if (!voice.checked || !('speechSynthesis' in window)) return;
+    speechSynthesis.cancel();
+    const u = new SpeechSynthesisUtterance(text);
+    u.lang = 'zh-CN';
+    u.rate = 1.3;
+    speechSynthesis.speak(u);
+  }
+
+  async function holdWake() {
+    if (!('wakeLock' in navigator)) return;
+    try {
+      const lock = await navigator.wakeLock.request('screen');
+      if (running) wakeLock = lock; else lock.release();
+    } catch (err) {
+      console.warn('无法保持屏幕常亮', err);
+    }
+  }
+
+  function start() {
+    running = true;
+    done = 0;
+    last = null;
+    audio ??= new AudioContext();
+    audio.resume();
+    settings.disabled = true;
+    toggle.textContent = '停止';
+    court.classList.add('running');
+    $('done').textContent = 0;
+    holdWake();
+    speak('准备');
+    countdown(3);
+  }
+
+  function countdown(n) {
+    if (n === 0) return cue();
+    status.textContent = n;
+    beep(440, 120);
+    later(() => countdown(n - 1), 1000);
+  }
+
+  function cue() {
+    timers = [];
+    if (done >= Number(countInput.value)) {
+      beep(660, 400);
+      speak('完成');
+      return end('完成');
+    }
+    const id = pickNext([...enabled], last);
+    last = id;
+    done++;
+    $('done').textContent = done;
+    buttons[id].classList.add('hot');
+    status.textContent = buttons[id].textContent;
+    beep(880, 150);
+    speak(buttons[id].textContent);
+
+    const ms = Number(intervalInput.value) * 1000;
+    later(() => {
+      buttons[id].classList.remove('hot');
+      status.textContent = '回中';
+    }, ms * 0.6);
+    later(cue, ms);
+  }
+
+  function end(text) {
+    timers.forEach(clearTimeout);
+    timers = [];
+    running = false;
+    if (last) buttons[last].classList.remove('hot');
+    status.textContent = text;
+    settings.disabled = false;
+    toggle.textContent = '开始';
+    court.classList.remove('running');
+    if (wakeLock) { wakeLock.release(); wakeLock = null; }
+  }
+
+  toggle.addEventListener('click', () => {
+    if (!running) return start();
+    if ('speechSynthesis' in window) speechSynthesis.cancel();
+    end('中');
+  });
+</script>
+</body>
+</html>
